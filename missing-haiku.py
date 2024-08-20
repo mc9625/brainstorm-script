@@ -13,7 +13,7 @@ DB_PARAMS = {
     "port": "5432"
 }
 
-OPENAI_API_KEY = '***REMOVED***'
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
