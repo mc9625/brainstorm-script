@@ -2,7 +2,11 @@ import psycopg2
 import openai
 from psycopg2.extras import RealDictCursor
 import time
+import os
+from dotenv import load_dotenv
 from openai import OpenAI
+
+load_dotenv()
 
 # Database connection parameters
 DB_PARAMS = {
