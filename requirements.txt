@@ -1,0 +1,44 @@
+# requirements.txt
+
+# Database
+psycopg2-binary
+
+# HTTP requests
+requests
+
+# MQTT
+paho-mqtt
+
+# Natural Language Processing
+langdetect
+textblob
+scikit-learn
+
+# Machine Learning
+sentence-transformers
+
+# OpenAI (if still needed for some functions)
+openai
+
+# Environment variables
+python-dotenv
+
+# Date and time handling
+pytz
+
+# Document processing (if still using ingest.py)
+langchain
+PyPDF2
+docx2txt
+EbookLib
+beautifulsoup4
+markdown
+
+# Utility
+tqdm
+
+# Web framework (if needed for API)
+flask
+
+# Twitter API (if still using)
+requests-oauthlib
