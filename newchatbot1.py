@@ -20,16 +20,17 @@ MQTT_PORT = 1883
 # Initialize MQTT client
 mqtt_client = mqtt.Client()
 mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+mqtt_client.loop_start()  # Aggiungi questa linea
 
 def is_too_similar(text1, text2, threshold=0.6):
     """Returns True if the texts are too similar, False otherwise."""
     s = difflib.SequenceMatcher(None, text1, text2)
     return s.ratio() > threshold
 
-def generate_response(prompt, topic, conversation_id, counter, last_message):
+def generate_response(prompt, topic, conversation_id, counter, last_message, conversation_history, language):
     headers = {"Content-Type": "application/json"}
     bot_number = 1  # Use 2 for newchatbot2.py
-    system_message, bot_bio = get_bot_personality(conversation_id, bot_number)
+    system_message, bot_bio = get_bot_personality(conversation_id, bot_number, language)
     
     if not system_message:
         system_message = f"You are an AI assistant discussing {topic}. Respond with short, concise sentences."
@@ -46,19 +47,27 @@ def generate_response(prompt, topic, conversation_id, counter, last_message):
     3. Stay true to your personality and background in your communication style.
     4. Focus on providing substantive input related to the topic rather than social niceties.
     5. It's okay to disagree or present contrasting viewpoints when appropriate.
+    6. Consider the context of the conversation and directly address points made in previous messages.
+    7. Respond in {'Italian' if language == 'ita' else 'English'}.
     """
 
-    headers = {"Content-Type": "application/json"}
+    messages = [
+        {"role": "system", "content": full_system_message},
+    ]
+    
+    # Add conversation history
+    for msg in conversation_history[-5:]:  # Include last 5 messages for context
+        messages.append({"role": "user" if msg['speaker'] != f"AI{bot_number}" else "assistant", "content": msg['message']})
+    
+    messages.append({"role": "user", "content": prompt})
+
     data = {
         "model": "gemma2:2b",
-        "messages": [
-            {"role": "system", "content": full_system_message},
-            {"role": "user", "content": prompt}
-        ],
+        "messages": messages,
         "stream": False,
         "options": {
             "temperature": 0.7,
-            "max_tokens": 100  # Reduce max tokens to encourage shorter responses
+            "max_tokens": 60
         }
     }
     try:
@@ -97,9 +106,10 @@ def main():
 
     # Update MQTT feeds
     mqtt_client.publish("AI1/status", 'speaking')
+    print("Published 'speaking' to AI1/status", flush=True)
     
     # Print the AI's response to stdout
-    print(f"AI1:{response}")
+    print(f"AI1 dice:{response}")
 
     # Save the message to PostgreSQL
     save_message_to_postgres(args.conversation_id, "AI1", response)
@@ -112,3 +122,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    mqtt_client.loop_stop()  # Ferma il loop di rete
+    mqtt_client.disconnect()  # Disconnette il client

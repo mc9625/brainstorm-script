@@ -11,6 +11,7 @@ import time
 from requests_oauthlib import OAuth1
 import requests
 import json
+import argparse
 
 # Load environment variables
 load_dotenv()
@@ -45,18 +46,30 @@ def connect_to_oauth(consumer_key, consumer_secret, access_token, access_token_s
     auth = OAuth1(consumer_key, consumer_secret, access_token, access_token_secret)
     return url, auth
 
-def generate_haiku(summary):
+def generate_haiku(summary, language):
     headers = {"Content-Type": "application/json"}
+    if language == "ita":
+        system_content = "Sei un assistente poetico. Sei in grado di convertire qualsiasi testo in un haiku poetico e ispiratore in italiano."
+        user_content = f"""Basandoti sul seguente riassunto, crea un haiku che rispetti rigorosamente la struttura tradizionale di 5-7-5 sillabe.
+        L'haiku dovrebbe evocare un momento nella natura o una riflessione su una stagione, con una chiara giustapposizione o contrasto tra due immagini o idee. 
+        Assicurati che l'haiku sia ispirato al contenuto del seguente riassunto:
+
+        Riassunto:
+        {summary}"""
+    else:
+        system_content = "You are a poetic assistant. You are able to convert any text into a poetic and inspiring haiku."
+        user_content = f"""Based on the following summary, create a haiku that strictly adheres to the traditional 5-7-5 syllable structure.
+        The haiku should evoke a moment in nature or a reflection on a season, with a clear juxtaposition or contrast between two images or ideas. 
+        Ensure the haiku is inspired by the content of the summary below:
+
+        Summary:
+        {summary}"""
+
     data = {
         "model": "gemma2:2b",
         "messages": [
-            {"role": "system", "content": "You are a poetic assistant. You are able to convert any text into a poetic and inspiring haiku."},
-            {"role": "user", "content": f"""Based on the following summary, create a haiku that strictly adheres to the traditional 5-7-5 syllable structure.
-The haiku should evoke a moment in nature or a reflection on a season, with a clear juxtaposition or contrast between two images or ideas. 
-Ensure the haiku is inspired by the content of the summary below:
-
-Summary:
-{summary}"""}
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_content}
         ],
         "stream": False,
         "options": {
@@ -78,9 +91,20 @@ Summary:
 
     return haiku
 
+def get_summary_prompt(language):
+    if language == "ita":
+        return "Scrivi un riassunto conciso e coinvolgente della sessione di brainstorming. Il riassunto dovrebbe essere fluido e discorsivo, evitando elenchi puntati. Concentrati sulla cattura dell'essenza della discussione, evidenziando le intuizioni chiave, le conclusioni e il tono generale della conversazione in una singola narrazione coerente."
+    else:
+        return "Write a concise and engaging summary of the brainstorming session. The summary should be fluid and discursive, avoiding bullet points or lists. Focus on capturing the essence of the discussion, highlighting key insights, conclusions, and the overall tone of the conversation in a single, coherent narrative."
 
-def generate_hashtags(text, num_hashtags):
-    vectorizer = CountVectorizer(stop_words='english')
+
+def generate_hashtags(text, num_hashtags, language):
+    if language == "ita":
+        stop_words = ['il', 'lo', 'la', 'i', 'gli', 'le', 'un', 'uno', 'una', 'e', 'ed', 'a', 'al', 'alla', 'di', 'da', 'in', 'su', 'per', 'tra', 'fra']
+    else:
+        stop_words = 'english'
+
+    vectorizer = CountVectorizer(stop_words=stop_words)
     X = vectorizer.fit_transform([text])
     words = vectorizer.get_feature_names_out()
     counts = X.toarray().sum(axis=0)
@@ -89,17 +113,24 @@ def generate_hashtags(text, num_hashtags):
     hashtags = [f"#{word}" for word, _ in word_counts[:num_hashtags]]
     return hashtags
 
-def generate_summarizer(max_tokens, temperature, top_p, frequency_penalty, conversation, topic, conversation_id):
+def generate_summarizer(max_tokens, temperature, top_p, frequency_penalty, conversation, topic, conversation_id, language):
     current_time = datetime.now().strftime("%Y%m%d%H%M")
     sanitized_topic = topic.replace(" ", "_").lower()
     title = f"brainstorming-{sanitized_topic}-{current_time}"
+
+    if language == "ita":
+        system_content = "Sei un abile scrittore e sintetizzatore. Rispondi in italiano."
+        user_content = f"Scrivi un riassunto conciso e coinvolgente della sessione di brainstorming su {topic}. Il riassunto dovrebbe essere fluido e discorsivo, evitando elenchi puntati. Concentrati sulla cattura dell'essenza della discussione, evidenziando le intuizioni chiave, le conclusioni e il tono generale della conversazione in una singola narrazione coerente: {conversation}"
+    else:
+        system_content = "You are a skilled writer and summarizer."
+        user_content = f"Write a concise and engaging summary of the brainstorming session about {topic}. The summary should be fluid and discursive, avoiding bullet points or lists. Focus on capturing the essence of the discussion, highlighting key insights, conclusions, and the overall tone of the conversation in a single, coherent narrative: {conversation}"
 
     headers = {"Content-Type": "application/json"}
     data = {
         "model": "gemma2:2b",
         "messages": [
-            {"role": "system", "content": "You are a skilled writer and summarizer."},
-            {"role": "user", "content": f"Write a concise and engaging summary of the brainstorming session about {topic}. The summary should be fluid and discursive, avoiding bullet points or lists. Focus on capturing the essence of the discussion, highlighting key insights, conclusions, and the overall tone of the conversation in a single, coherent narrative: {conversation}"}
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_content}
         ],
         "stream": False,
         "options": {
@@ -119,8 +150,8 @@ def generate_summarizer(max_tokens, temperature, top_p, frequency_penalty, conve
         print(f"Connection error: {e}")
         summary = "Error generating summary"
 
-    hashtags = generate_hashtags(summary, 5)
-    haiku = generate_haiku(summary)
+    hashtags = generate_hashtags(summary, 5, language)
+    haiku = generate_haiku(summary, language)  # Passa il parametro 'language' qui
 
     final_summary = {
         "date": datetime.now().strftime("%Y-%m-%d"),
@@ -189,7 +220,7 @@ def post_tweet(text, hashtags, topic):
     except Exception as e:
         print(f"Error posting tweet: {str(e)}")
 
-def main():
+def main(conversation_id, language):
     # Get the last conversation from PostgreSQL
     connection = connection_pool.getconn()
     try:
@@ -212,6 +243,7 @@ def main():
         connection_pool.putconn(connection)
 
     # Generate the summary, haiku, and hashtags
+    summary_prompt = get_summary_prompt(language)
     summary = generate_summarizer(
         max_tokens=300,
         temperature=0.7,
@@ -220,6 +252,7 @@ def main():
         conversation=conversation_text,
         topic=topic,
         conversation_id=conversation_id,
+        language=language  # Aggiungi questa riga
     )
 
     # Publish haiku to MQTT
@@ -239,5 +272,9 @@ def main():
     print(summary)
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Generate a conversation summary")
+    parser.add_argument("--conversation_id", required=True, help="The ID of the conversation to summarize")
+    parser.add_argument("--language", default="eng", choices=["eng", "ita"], help="Language of the summary (eng or ita)")
+    args = parser.parse_args()
     tweet_counter = 0
-    main()
+    main(args.conversation_id, args.language)

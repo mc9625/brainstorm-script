@@ -1,0 +1,239 @@
+# Conversation Generator README
+
+This directory contains Python scripts and associated files for generating AI conversations using chatbots. Below is an overview of the main components and instructions on how to use them.
+
+---
+
+## Contents
+
+- **`main.py`**: The main script that orchestrates conversations between chatbots and handles user input.
+- **`newchatbot1.py`** and **`newchatbot2.py`**: Scripts for individual chatbots that generate responses and publish messages to MQTT topics.
+- **`postgres_operations.py`**: Functions for interacting with the PostgreSQL database.
+- **`utils.py`**: Utility functions used across scripts.
+- **`bot_personality_generator.py`**: Generates unique personalities for the chatbots.
+- **`new_conversation_summary.py`**: Generates summaries for completed conversations.
+- **`requirements.txt`**: Lists the Python dependencies required to run the scripts.
+
+---
+
+## Setup
+
+### 1. Install Dependencies
+
+Ensure you have **Python 3.7** or higher installed. Install required packages using:
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Configure the Database
+
+Update the `DB_PARAMS` in `main.py` and `postgres_operations.py` with your PostgreSQL database credentials:
+
+```python
+DB_PARAMS = {
+    "dbname": "your_database",
+    "user": "your_username",
+    "password": "your_password",
+    "host": "your_host",
+    "port": "your_port"
+}
+```
+
+### 3. Configure MQTT Broker
+
+Ensure that the MQTT broker details in the scripts point to your MQTT broker:
+
+```python
+MQTT_BROKER = "your_mqtt_broker_address"
+MQTT_PORT = your_mqtt_broker_port  # Typically 1883 for MQTT
+```
+
+### 4. Configure Ollama Server
+
+Set the `OLLAMA_URL` in the scripts to point to the correct Ollama API endpoint:
+
+```python
+OLLAMA_URL = "http://your_ollama_server_address:port/api/chat"
+```
+
+---
+
+## Running the Scripts
+
+### Starting a Conversation
+
+To start a new conversation:
+
+```bash
+python main.py
+```
+
+Specify the language (`eng` for English or `ita` for Italian):
+
+```bash
+python main.py eng  # For English conversation
+python main.py ita  # For Italian conversation
+```
+
+### Handling User Messages
+
+To process a user message within an existing conversation:
+
+```bash
+python main.py --conversation_id <id> --user_message "<message>"
+```
+
+Replace `<id>` with the conversation ID and `<message>` with the user's message.
+
+### Generating Bot Personalities
+
+To generate new personalities for the chatbots:
+
+```bash
+python bot_personality_generator.py --topic "<topic>" --language <eng|ita>
+```
+
+### Summarizing Conversations
+
+After a conversation ends, generate a summary:
+
+```bash
+python new_conversation_summary.py --conversation_id <id> --language <eng|ita>
+```
+
+---
+
+## File Descriptions
+
+- **`main.py`**: Manages conversation flow, handles user input, coordinates between chatbots, and publishes messages to MQTT topics.
+- **`newchatbot1.py` / `newchatbot2.py`**: Generate responses for each chatbot, publish their status and messages to MQTT, and save messages to the database.
+- **`postgres_operations.py`**: Contains functions for database operations like saving messages, retrieving conversation history, and managing bot statuses.
+- **`utils.py`**: Utility functions such as running chatbots, memory usage tracking, and prompt generation.
+- **`bot_personality_generator.py`**: Generates unique personalities for chatbots based on the conversation topic.
+- **`new_conversation_summary.py`**: Generates a summary of the conversation for storage or display.
+- **`requirements.txt`**: Lists all Python packages required by the scripts.
+
+---
+
+## Common Commands
+
+### Start a Conversation
+
+- **In English:**
+
+  ```bash
+  python main.py eng
+  ```
+
+- **In Italian:**
+
+  ```bash
+  python main.py ita
+  ```
+
+### Process a User Message
+
+```bash
+python main.py --conversation_id 123 --user_message "Your message here"
+```
+
+### Generate Bot Personalities
+
+```bash
+python bot_personality_generator.py --topic "climate change" --language eng
+```
+
+### Summarize a Conversation
+
+```bash
+python new_conversation_summary.py --conversation_id 123 --language eng
+```
+
+---
+
+## Notes
+
+- **Ensure Services are Running:**
+  - **MQTT Broker:** Verify that your MQTT broker is running and accessible.
+  - **PostgreSQL Database:** Ensure the database server is up and accepts connections.
+  - **Ollama API:** The Ollama server should be running and reachable at the specified URL.
+
+- **MQTT Topics Used:**
+  - **`AI1/status`** and **`AI2/status`**: Bots publish their status (`speaking` or `stop`) to these topics.
+  - **`conversations/{conversation_id}`**: Bots publish conversation messages to this topic.
+
+- **Language Options:**
+  - Use `eng` for English.
+  - Use `ita` for Italian.
+
+---
+
+## Troubleshooting
+
+- **No Messages in MQTT Topics:**
+  - Ensure the MQTT broker is running.
+  - Verify network connectivity between scripts and the broker.
+  - Check that the correct host and port are configured.
+
+- **Database Connection Errors:**
+  - Confirm database credentials and network access.
+  - Check if the database service is active.
+
+- **API Connection Errors:**
+  - Verify the Ollama API URL and that the service is operational.
+
+- **Scripts Not Publishing Bot Status:**
+  - Ensure that `main.py` has been updated to publish `speaking` and `stop` statuses to the appropriate MQTT topics (`AI1/status`, `AI2/status`).
+
+---
+
+## Example Workflow
+
+1. **Start the Conversation:**
+
+   ```bash
+   python main.py eng
+   ```
+
+2. **Monitor MQTT Topics:**
+
+   Use an MQTT client to subscribe to topics:
+
+   - For bot statuses:
+
+     ```bash
+     mosquitto_sub -h your_mqtt_broker_address -p your_mqtt_broker_port -t 'AI1/status'
+     mosquitto_sub -h your_mqtt_broker_address -p your_mqtt_broker_port -t 'AI2/status'
+     ```
+
+   - For conversation messages:
+
+     ```bash
+     mosquitto_sub -h your_mqtt_broker_address -p your_mqtt_broker_port -t 'conversations/#'
+     ```
+
+3. **Send a User Message:**
+
+   ```bash
+   python main.py --conversation_id 123 --user_message "What do you think about renewable energy?"
+   ```
+
+4. **Generate Conversation Summary:**
+
+   ```bash
+   python new_conversation_summary.py --conversation_id 123 --language eng
+   ```
+
+---
+
+## Additional Tips
+
+- **Logging:**
+  - The scripts print messages to the console for debugging. Monitor the output for any errors or status updates.
+
+- **Modifying Bot Personalities:**
+  - Customize bot personalities by editing `bot_personality_generator.py` or by manually setting personalities in the database.
+
+- **Extending Functionality:**
+  - Feel free to modify and extend the scripts to suit your needs, such as adding new languages or integrating with different APIs.

@@ -4,6 +4,18 @@ import psycopg2
 from psycopg2 import pool
 from datetime import datetime
 from bot_personality_generator import generate_bot_personalities
+import paho.mqtt.client as mqtt
+import json
+
+# MQTT broker parameters
+MQTT_BROKER = "cheshirecatai.ddns.net"
+MQTT_PORT = 1883
+MQTT_TOPIC = "conversations/new"  # Scegli un topic adeguato
+
+# Initialize MQTT client
+mqtt_client = mqtt.Client()
+mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+mqtt_client.loop_start()
 
 # Use the same DB_PARAMS as in main.py
 DB_PARAMS = {
@@ -110,7 +122,7 @@ def save_bot_personalities(conversation_id, bot1_prompt, bot1_description, bot2_
     finally:
         connection_pool.putconn(connection)
 
-def get_bot_personality(conversation_id, bot_number):
+def get_bot_personality(conversation_id, bot_number, language):
     connection = connection_pool.getconn()
     try:
         with connection.cursor() as cursor:
@@ -120,7 +132,20 @@ def get_bot_personality(conversation_id, bot_number):
                 WHERE conversation_id = %s AND bot_number = %s
             """, (conversation_id, bot_number))
             result = cursor.fetchone()
-            return result if result else (None, None)
+            if result:
+                return result
+            else:
+                # Se non trova una personalità, ne genera una nuova
+                cursor.execute("SELECT topic FROM conversations WHERE id = %s", (conversation_id,))
+                topic = cursor.fetchone()[0]
+                personalities = generate_bot_personalities(topic, language)
+                if personalities:
+                    save_bot_personalities(conversation_id, 
+                                           personalities['bot1_prompt'], personalities['bot1_bio'],
+                                           personalities['bot2_prompt'], personalities['bot2_bio'])
+                    return personalities[f'bot{bot_number}_prompt'], personalities[f'bot{bot_number}_bio']
+                else:
+                    return "You are an AI assistant discussing the topic.", "You are an AI with general knowledge."
     finally:
         connection_pool.putconn(connection)
 
@@ -162,19 +187,30 @@ def ensure_bot_status_table():
         connection_pool.putconn(connection)
 
 
-def start_new_conversation(topic, prompt, conversation):
+def start_new_conversation(topic, prompt, conversation, language):
     connection = connection_pool.getconn()
     try:
         with connection.cursor() as cursor:
+            lang_code = "[ITA]" if language == "ita" else "[ENG]"
+            if language == "ita":
+                title = f"{lang_code} Brainstorming su {topic} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            else:
+                title = f"{lang_code} Brainstorming on {topic} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            
             cursor.execute(
                 "INSERT INTO conversations (title, topic) VALUES (%s, %s) RETURNING id",
-                (conversation['title'], topic)
+                (title, topic)
             )
             conversation_id = cursor.fetchone()[0]
             
             cursor.execute(
                 "INSERT INTO messages (conversation_id, speaker, message) VALUES (%s, %s, %s)",
                 (conversation_id, "AI0", prompt)
+            )
+
+            cursor.execute(
+                "UPDATE counters SET current_conversation_id = %s",
+                (conversation_id,)
             )
             
             # Update counters
@@ -183,20 +219,29 @@ def start_new_conversation(topic, prompt, conversation):
         # Commit the conversation and initial message
         connection.commit()
         print(f"New conversation started with id: {conversation_id}")
+        mqtt_message = {
+            "conversation_id": conversation_id,
+            "title": title,
+            "topic": topic,
+            "prompt": prompt
+        }
+        print(f"Preparing to send MQTT message: {mqtt_message}")  # Debugging line
+        mqtt_client.publish(MQTT_TOPIC, json.dumps(mqtt_message))
+        print(f"MQTT message sent for conversation {conversation_id}")
 
         # Generate and save bot personalities after committing the conversation
-        personalities = generate_bot_personalities(topic)
+        personalities = generate_bot_personalities(topic, language)
         if personalities:
             save_bot_personalities(conversation_id, 
-                                   personalities['bot1_prompt'], personalities['bot1_bio'],
-                                   personalities['bot2_prompt'], personalities['bot2_bio'])
+                                personalities['bot1_prompt'], personalities['bot1_bio'],
+                                personalities['bot2_prompt'], personalities['bot2_bio'])
         else:
             print("Failed to generate bot personalities. Using default prompts.")
             save_bot_personalities(conversation_id,
-                                   "You are an AI assistant discussing the topic.",
-                                   "You are an AI with general knowledge.",
-                                   "You are an AI assistant discussing the topic.",
-                                   "You are an AI with general knowledge.")
+                                "You are an AI assistant discussing the topic.",
+                                "You are an AI with general knowledge.",
+                                "You are an AI assistant discussing the topic.",
+                                "You are an AI with general knowledge.")
 
         return conversation_id
     except Exception as e:
@@ -206,21 +251,7 @@ def start_new_conversation(topic, prompt, conversation):
     finally:
         connection_pool.putconn(connection)
 
-def save_bot_personalities(conversation_id, bot1_prompt, bot1_description, bot2_prompt, bot2_description):
-    connection = connection_pool.getconn()
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                INSERT INTO bot_personalities (conversation_id, bot_number, prompt, description)
-                VALUES (%s, 1, %s, %s), (%s, 2, %s, %s)
-            """, (conversation_id, bot1_prompt, bot1_description, conversation_id, bot2_prompt, bot2_description))
-        connection.commit()
-        print(f"Bot personalities saved for conversation {conversation_id}")
-    except Exception as e:
-        print(f"An error occurred while saving bot personalities: {e}")
-        connection.rollback()
-    finally:
-        connection_pool.putconn(connection)
+
 
 def get_bot_status():
     connection = connection_pool.getconn()
@@ -275,32 +306,14 @@ def get_and_remove_latest_user_message(conversation_id):
     connection = connection_pool.getconn()
     try:
         with connection.cursor() as cursor:
-            # Check if the messages table exists
-            cursor.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_name = 'messages'
-                )
-            """)
-            if not cursor.fetchone()[0]:
-                print("Messages table does not exist. Creating it now.")
-                init_db()
-                return None
-
             cursor.execute(
-                "SELECT id, message FROM messages WHERE conversation_id = %s AND speaker = 'User' ORDER BY timestamp DESC LIMIT 1",
+                "SELECT message FROM messages WHERE conversation_id = %s AND speaker = 'User' ORDER BY timestamp DESC LIMIT 1",
                 (conversation_id,)
             )
             result = cursor.fetchone()
-            if result:
-                message_id, message = result
-                cursor.execute("DELETE FROM messages WHERE id = %s", (message_id,))
-                connection.commit()
-                return message
-            return None
+            return result[0] if result else None
     except Exception as e:
-        print(f"An error occurred while getting/removing user message: {e}")
-        connection.rollback()
+        print(f"An error occurred while getting user message: {e}")
         return None
     finally:
         connection_pool.putconn(connection)
@@ -329,9 +342,39 @@ def get_recent_conversations(limit=10):
     finally:
         connection_pool.putconn(connection)
 
+def get_conversation_history(conversation_id, limit=5):
+    connection = connection_pool.getconn()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT speaker, message 
+                FROM messages 
+                WHERE conversation_id = %s 
+                ORDER BY timestamp DESC 
+                LIMIT %s
+                """,
+                (conversation_id, limit)
+            )
+            return [{"speaker": row[0], "message": row[1]} for row in cursor.fetchall()][::-1]
+    finally:
+        connection_pool.putconn(connection)
+
+def get_latest_user_message(conversation_id):
+    connection = connection_pool.getconn()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT message FROM messages WHERE conversation_id = %s AND speaker = 'User' ORDER BY timestamp DESC LIMIT 1",
+                (conversation_id,)
+            )
+            result = cursor.fetchone()
+            return result[0] if result else None
+    finally:
+        connection_pool.putconn(connection)
+
 # Call this function before init_db()
 create_tables()
 init_db()
 ensure_bot_status_table()
-
 
